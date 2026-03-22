@@ -21,212 +21,44 @@ OLLAMA_MODEL 상수를 바꾸면 된다.
   "mistral"       → 7B, 영어 강점
 """
 
-# import os
-# import json
-# import requests
-# from config import OUTPUT_DIR
 
-# OLLAMA_URL   = "http://localhost:11434/api/chat"
-# OLLAMA_MODEL = "qwen2.5:3b"  # ← 원하는 모델로 변경
-
-
-# # =========================================================
-# # 증거 데이터 → 프롬프트 텍스트 변환
-# # =========================================================
-
-# def _summarize_evidence(evi):
-#     """frame_evidence 딕셔너리를 한 줄 핵심 요약으로 변환."""
-#     if "top_repeated_pairs" in evi:
-#         top = next(iter(evi["top_repeated_pairs"]), "")
-#         cnt = evi["top_repeated_pairs"].get(top, 0) if top else 0
-#         return f"반복쌍 '{top}' {cnt}회, 반복비율={evi.get('repeat_ratio', 0):.1%}"
-#     if "top_ids" in evi:
-#         top = next(iter(evi["top_ids"]), "")
-#         cnt = evi["top_ids"].get(top, 0) if top else 0
-#         return f"지배ID {top} {cnt}회, top1비율={evi.get('top1_ratio', 0):.1%}"
-#     if "iat_std_ms" in evi:
-#         return f"IAT표준편차={evi['iat_std_ms']:.3f}ms, 버스트={evi.get('burst_frames', 0)}회"
-#     if "unique_payloads" in evi:
-#         return (f"고유payload={evi['unique_payloads']}종, "
-#                 f"최다='{evi.get('most_common_payload', '')}' "
-#                 f"{evi.get('most_common_payload_cnt', 0)}회")
-#     if "payload_change_rate" in evi:
-#         return f"payload변화율={evi['payload_change_rate']:.1%}"
-#     note = evi.get("note", "")
-#     return note[:60] if note else "-"
-
-
-# def _format_for_prompt(all_results):
-#     lines = []
-
-#     for result in all_results:
-#         attack = result["attack_type"]
-#         lines.append(f"## {attack} 공격 "
-#                      f"(총 {result['window_count']}개 구간 탐지, "
-#                      f"대표 {len(result['windows'])}개 분석)")
-
-#         for w in result["windows"]:
-#             lines.append(f"\n### 구간 #{w['rank']} "
-#                          f"({w['t_start']}s~{w['t_end']}s, SHAP합계={w['shap_total']})")
-#             lines.append("**핵심 피처 (SHAP 상위 3개):**")
-#             for feat in w["shap_top5"][:3]:
-#                 evi     = w["frame_evidence"].get(feat["feature"], {})
-#                 evi_str = _summarize_evidence(evi)
-#                 lines.append(
-#                     f"  - {feat['feature']}: SHAP={feat['shap_value']:+.4f}, "
-#                     f"실측={feat['actual']:.4f} (정상평균={feat['normal_mean']:.4f}) | {evi_str}"
-#                 )
-
-#         lines.append("")
-
-#     return "\n".join(lines)
-
-
-# # =========================================================
-# # LLM 보고서 생성
-# # =========================================================
-
-# SYSTEM_PROMPT = """당신은 차량 사이버보안 분석가입니다. IDS 분석 결과를 바탕으로 조사 보고서를 작성합니다.
-
-# [문체 규칙 — 반드시 지켜야 함]
-# - 단어나 표현에 쌍따옴표를 쓰지 않는다. (예: "관찰됨" → 관찰됨, "높은 값" → 높은 값)
-# - ~됩니다, ~것입니다, ~하였습니다 체를 쓰지 않는다. 서술형으로 간결하게 쓴다.
-# - 불필요한 소제목, 번호 매기기, 빈 줄 남발을 피한다.
-# - 수치는 문장 안에 자연스럽게 녹인다. (예: "SHAP 값은 +0.42로" 가 아니라 "SHAP +0.42는")
-# - 각 공격 구간은 3~4문장 단락으로 쓴다. 증거 → 이유 순서로.
-
-# [보고서 구조]
-# # CAN 버스 침입 분석 보고서
-# ## 분석 개요
-# (데이터셋, 탐지 공격 유형, 총 탐지 구간 수를 두 문장으로)
-# ## Replay Attack 분석
-# (각 구간을 단락 형식으로, ### 구간 #N 제목 사용)
-# ## Spoofing Attack 분석
-# (동일 형식)
-# ## 종합 판단"""
-
-
-# def generate_llm_report(all_results, split_name="Test"):
-#     """
-#     포렌식 분석 결과를 Ollama 로컬 LLM에 전달하여 조사관용 보고서 생성.
-
-#     Parameters
-#     ----------
-#     all_results : list of dict
-#         run_forensic_report() 의 반환값
-#     split_name  : str
-#         저장 파일명 구분용
-
-#     Returns
-#     -------
-#     report_path : str  저장된 마크다운 파일 경로  (실패 시 None)
-#     """
-#     print(f"\n{'='*60}")
-#     print(f"[{split_name}] LLM 포렌식 보고서 생성 중... (모델: {OLLAMA_MODEL})")
-#     print(f"{'='*60}")
-
-#     if not all_results:
-#         print("  경고: 분석 결과가 없어 보고서를 생성할 수 없습니다.")
-#         return None
-
-#     evidence_text = _format_for_prompt(all_results)
-
-#     user_prompt = f"""아래 데이터를 바탕으로 CAN 버스 침입 분석 보고서를 한국어로 작성해라.
-
-# 분석 대상: {split_name} 세트 | 도구: XGBoost IDS + SHAP
-
-# 피처 의미:
-# repeat_id_data_ratio: 같은 (ID, payload) 쌍이 반복된 비율. 높으면 동일 메시지 재주입.
-# top1_id_ratio: 가장 많이 등장한 ID의 점유율. 높으면 특정 ID 집중.
-# payload_entropy: payload 다양성. 낮으면 단조로운 패턴(Replay 특성).
-# iat_std: 프레임 전송 간격의 표준편차. 낮으면 기계적으로 균일한 주입.
-# max_same_payload_run: 동일 payload가 연속된 최대 길이.
-
-# --- 분석 데이터 ---
-# {evidence_text}
-# ---
-
-# 작성 방식:
-# - 각 구간은 단락 하나로. 번호 목록 쓰지 말고 문장으로 이어서 써라.
-# - 수치를 직접 언급하되 자연스럽게 녹여라. (예: SHAP +0.38은 정상 대비 replay_id_data_ratio가 2.3배 높은 것에서 비롯됐다)
-# - 왜 이 수치 패턴이 해당 공격 유형의 흔적인지 CAN 버스 동작 원리로 설명해라.
-# - 단어에 쌍따옴표 붙이지 마라. ~됩니다 체 쓰지 마라."""
-
-#     # 프롬프트 길이 확인 (디버그)
-#     total_chars = len(SYSTEM_PROMPT) + len(user_prompt)
-#     print(f"  프롬프트 길이: {total_chars}자 (~{total_chars//4} 토큰 추정)")
-
-#     # system 메시지를 user 메시지 앞에 합침 (일부 모델은 system role 미지원)
-#     combined_prompt = SYSTEM_PROMPT + "\n\n" + user_prompt
-
-#     payload = {
-#         "model": OLLAMA_MODEL,
-#         "messages": [
-#             {"role": "user", "content": combined_prompt},
-#         ],
-#         "stream": True,
-#         "options": {
-#             "num_ctx": 4096,      # 컨텍스트 창 제한 (메모리 절약)
-#             "num_predict": 1024,  # 최대 출력 토큰
-#         },
-#     }
-
-#     try:
-#         print(f"  Ollama 스트리밍 호출 중 (모델: {OLLAMA_MODEL}) ", end="", flush=True)
-#         resp = requests.post(OLLAMA_URL, json=payload,
-#                              timeout=(10, 300), stream=True)
-#         if not resp.ok:
-#             print(f"\n  [오류 상세] status={resp.status_code}, body={resp.text[:500]}")
-#         resp.raise_for_status()
-
-#         report_text = ""
-#         token_count = 0
-#         for line in resp.iter_lines():
-#             if not line:
-#                 continue
-#             try:
-#                 chunk = json.loads(line.decode("utf-8"))
-#             except (json.JSONDecodeError, UnicodeDecodeError):
-#                 continue
-#             token = chunk.get("message", {}).get("content", "")
-#             report_text += token
-#             token_count += 1
-#             if token_count % 100 == 0:
-#                 print(".", end="", flush=True)
-#             if chunk.get("done"):
-#                 break
-#         print(f" ({token_count} tokens)")
-
-#     except requests.exceptions.ConnectionError:
-#         print("\n  [오류] Ollama에 연결할 수 없습니다.")
-#         print("  => Ollama가 실행 중인지 확인하세요: ollama serve")
-#         print(f"  => 모델이 설치됐는지 확인하세요: ollama pull {OLLAMA_MODEL}")
-#         return None
-#     except requests.exceptions.Timeout:
-#         print("\n  [오류] Ollama 응답 시간 초과")
-#         return None
-#     except Exception as e:
-#         print(f"\n  [오류] LLM 보고서 생성 실패: {e}")
-#         return None
-
-#     report_path = os.path.join(
-#         OUTPUT_DIR,
-#         f"forensic_report_llm_{split_name.lower()}.md"
-#     )
-#     with open(report_path, "w", encoding="utf-8") as f:
-#         f.write(report_text)
-
-#     print(f"  LLM 보고서 저장: {report_path}")
-#     print(f"[{split_name}] LLM 보고서 생성 완료")
-#     return report_path
 
 import os
+import re
 import json
 import requests
 from config import OUTPUT_DIR
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
-OLLAMA_MODEL = "qwen2.5:3b"   # 필요하면 qwen2.5:3b, llama3.1:8b 등으로 변경
+OLLAMA_MODEL = "qwen2.5:7b"   # 필요하면 qwen2.5:3b, gemma2:9b 등으로 변경
+
+# =========================================================
+# 피처 의미 사전 (LLM 프롬프트에 삽입)
+# =========================================================
+FEATURE_SEMANTICS = {
+    "id_payload_diff_std_mean":  "ID별 payload 변화량의 표준편차 평균. 높을수록 동일 ID가 다양한 payload 패턴으로 반복 전송됨 → Replay 핵심 지표",
+    "id_payload_diff_mean_mean": "ID별 연속 payload 변화량 평균. 높으면 동일 ID가 payload를 바꿔가며 반복 주입됨",
+    "repeat_id_data_ratio":      "동일 (ID, payload) 쌍 반복 비율. 높으면 동일 메시지가 그대로 재주입됨 → Replay 직접 증거",
+    "iat_mean":                  "프레임 간 평균 전송 간격(ms). 낮을수록 프레임이 빠르게 밀집 주입됨",
+    "iat_std":                   "프레임 간 전송 간격 표준편차. 낮으면 주입 간격이 기계적으로 균일함",
+    "msg_count":                 "윈도우 내 총 프레임 수. 정상 대비 많으면 외부 프레임 주입 의심",
+    "top1_id_ratio":             "가장 빈번한 ID의 점유율. 높으면 특정 ID가 비정상적으로 집중 전송됨 → Spoofing 핵심 지표",
+    "top3_id_ratio_sum":         "상위 3개 ID 합산 점유율. 소수 ID 집중 전송 여부 지표",
+    "mean_dlc":                  "평균 데이터 길이(bytes). 비정상값은 payload 구조 변조 의심",
+    "payload_entropy":           "payload 다양성 지수. 낮으면 단조로운 payload 반복 → Replay 특성",
+}
+
+# 문장 스타일 예시 (few-shot)
+_REPLAY_EXAMPLE = (
+    "IAT 평균이 0.35ms로 정상(0.42ms)보다 낮고, 0.2초 윈도우 내 프레임이 568개로 정상 대비 18% 많다. "
+    "CAN 버스에서 이처럼 고빈도·균일 간격으로 프레임이 밀집되는 것은 사전 캡처된 메시지를 기계적으로 재주입하는 Replay 패턴과 일치한다. "
+    "조사관 판단: 해당 구간은 Replay Attack 정황이 명확하며, 동일 ID·payload 반복 여부를 원본 로그에서 대조해야 한다."
+)
+_SPOOFING_EXAMPLE = (
+    "ID 0x233가 517프레임 중 37회(7.2%)를 점유해 정상 top1 점유율(4.2%) 대비 1.7배 높다. "
+    "CAN 버스에서 특정 ID가 이렇게 편중되는 것은 해당 ID를 가장한 메시지가 반복 주입된 Spoofing 흔적으로 볼 수 있다. "
+    "조사관 판단: 0x233 ID의 정상 전송 주기 및 ECU 명세를 대조하여 위조 여부를 확인해야 한다."
+)
 
 
 # =========================================================
@@ -406,7 +238,7 @@ def _build_window_block(attack_type, window_info):
     lines.append(_summarize_z_scores(z_top5))
     lines.append(f"- 주요 포렌식 증거(SHAP 상위 피처 기준):")
 
-    for feat in shap_top5:
+    for feat in shap_top5[:3]:
         feat_name = feat["feature"]
         evi = frame_evidence.get(feat_name, {})
         lines.append(_summarize_feature_evidence(feat_name, feat, evi))
@@ -480,132 +312,227 @@ SYSTEM_PROMPT = """
 # LLM 보고서 생성
 # =========================================================
 
-def generate_llm_report(all_results, split_name="Test"):
-    """
-    run_forensic_report()의 결과를 바탕으로
-    Ollama 로컬 LLM에게 포렌식 보고서 생성을 요청한다.
+_IAT_FEATURES = {"iat_mean", "iat_std", "iat_min", "iat_max", "burstiness"}
 
-    Parameters
-    ----------
-    all_results : list of dict
-        shap_analysis.run_forensic_report() 반환값
-    split_name : str
-        파일명 구분용
+def _build_window_prompt_item(attack_type, w):
+    """구간 하나를 LLM에게 넘길 짧은 텍스트로 변환. IAT 계열 피처는 ms로 변환."""
+    lines = [f"[{attack_type} 구간 #{w['rank']} | T={w['t_start']}s~{w['t_end']}s]"]
+    for feat in w["shap_top5"][:3]:
+        name   = feat["feature"]
+        actual = feat.get("actual", 0)
+        normal = feat.get("normal_mean", 0)
+        shap_v = feat.get("shap_value", 0)
+        evi    = w["frame_evidence"].get(name, {})
 
-    Returns
-    -------
-    report_path : str or None
-    """
-    print(f"\n{'=' * 70}")
-    print(f"[{split_name}] LLM 포렌식 보고서 생성 시작 (모델: {OLLAMA_MODEL})")
-    print(f"{'=' * 70}")
+        # IAT 계열은 초→ms 변환
+        if name in _IAT_FEATURES:
+            actual_s = f"{actual * 1000:.4f}ms"
+            normal_s = f"{normal * 1000:.4f}ms"
+        else:
+            actual_s = f"{actual:.4f}"
+            normal_s = f"{normal:.4f}"
 
-    if not all_results:
-        print("  [경고] all_results가 비어 있어 보고서를 생성할 수 없습니다.")
-        return None
+        evi_line = _summarize_feature_evidence(name, feat, evi)
+        evi_oneline = evi_line.replace("\n", " | ")
+        lines.append(
+            f"  피처={name} | SHAP={shap_v:+.4f} | 실측={actual_s} | 정상평균={normal_s} | {evi_oneline}"
+        )
+    return "\n".join(lines)
 
-    evidence_text = _format_for_prompt(all_results)
 
-    user_prompt = f"""
-아래는 {split_name} 세트에서 탐지된 CAN 버스 공격 구간의 포렌식 증거다.
-이를 바탕으로 조사관용 한국어 보고서를 작성하라.
-
-분석 도구:
-- 탐지 모델: XGBoost IDS
-- 설명 방법: SHAP
-- 보고 목적: 공격 구간의 프레임 수준 흔적을 근거로 Replay Attack 및 Spoofing Attack의 정황을 정리
-
-중요한 작성 규칙:
-- 모델 해석 설명문처럼 쓰지 말고, 포렌식 조사 문서처럼 써라.
-- 피처명만 반복하지 말고, 실제로 어떤 ID, payload, timing, 반복 특성이 관찰되었는지 중심으로 쓴다.
-- 공격 구간에 대해 정상적, 안정적, 이상적이라는 표현은 금지한다.
-- 각 구간마다 왜 Replay 또는 Spoofing으로 볼 수 있는지 논리적으로 써라.
-- 마지막에는 본 분석이 윈도우 기반 추정이며 ECU 단위 확정에는 추가 로그와 명세 대조가 필요하다고 명시하라.
-
-아래 증거를 이용하라.
-
-{evidence_text}
-""".strip()
-
-    combined_prompt = SYSTEM_PROMPT + "\n\n" + user_prompt
-    total_chars = len(combined_prompt)
-
-    print(f"  프롬프트 길이: {total_chars}자")
+def _call_ollama(user_prompt, assistant_prefix=""):
+    """Ollama 스트리밍 호출. 성공 시 생성 텍스트 반환, 실패 시 None."""
+    messages = [{"role": "user", "content": user_prompt}]
+    if assistant_prefix:
+        messages.append({"role": "assistant", "content": assistant_prefix})
 
     payload = {
         "model": OLLAMA_MODEL,
-        "messages": [
-            {"role": "user", "content": combined_prompt}
-        ],
+        "messages": messages,
         "stream": True,
         "options": {
-            "num_ctx": 8192,
-            "num_predict": 1800,
-            "temperature": 0.2,
+            "num_ctx": 2048,
+            "num_predict": 300,
+            "temperature": 0.3,
         },
     }
-
     try:
-        print(f"  Ollama 호출 중... ", end="", flush=True)
-        resp = requests.post(
-            OLLAMA_URL,
-            json=payload,
-            timeout=(30, 900),
-            stream=True
-        )
-
+        resp = requests.post(OLLAMA_URL, json=payload, timeout=(30, 600), stream=True)
         if not resp.ok:
-            print(f"\n  [오류 상세] status={resp.status_code}, body={resp.text[:500]}")
+            print(f"\n  [오류] status={resp.status_code}: {resp.text[:200]}")
+            return None
         resp.raise_for_status()
 
-        report_text = ""
-        chunk_count = 0
-
+        text = ""
         for line in resp.iter_lines():
             if not line:
                 continue
-
             try:
                 chunk = json.loads(line.decode("utf-8"))
             except Exception:
                 continue
-
-            token = chunk.get("message", {}).get("content", "")
-            report_text += token
-            chunk_count += 1
-
-            if chunk_count % 80 == 0:
-                print(".", end="", flush=True)
-
+            text += chunk.get("message", {}).get("content", "")
             if chunk.get("done"):
                 break
-
-        print(f" 완료 ({chunk_count} chunks)")
+        return text.strip()
 
     except requests.exceptions.ConnectionError:
-        print("\n  [오류] Ollama에 연결할 수 없습니다.")
-        print("  - ollama serve 실행 여부 확인")
-        print(f"  - 모델 설치 여부 확인: ollama pull {OLLAMA_MODEL}")
+        print("\n  [오류] Ollama 연결 실패 — ollama serve 실행 확인")
         return None
-
     except requests.exceptions.Timeout:
-        print("\n  [오류] Ollama 응답 시간이 초과되었습니다.")
+        print("\n  [오류] Ollama 응답 시간 초과")
         return None
-
     except Exception as e:
-        print(f"\n  [오류] LLM 보고서 생성 실패: {e}")
+        print(f"\n  [오류] {e}")
         return None
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    report_path = os.path.join(
-        OUTPUT_DIR,
-        f"forensic_report_llm_{split_name.lower()}.md"
+
+def generate_llm_report(all_results, split_name="Test"):
+    """
+    Python이 실제 수치로 보고서 뼈대를 만들고,
+    LLM은 구간당 짧은 한국어 분석 문장만 생성한다.
+    """
+    print(f"\n{'=' * 70}")
+    print(f"[{split_name}] LLM 포렌식 보고서 생성 (모델: {OLLAMA_MODEL})")
+    print(f"{'=' * 70}")
+
+    if not all_results:
+        print("  [경고] all_results가 비어 있습니다.")
+        return None
+
+    total_windows = sum(r.get("window_count", 0) for r in all_results)
+    attack_types  = [r["attack_type"] for r in all_results]
+
+    # ── 보고서 뼈대 (Python이 실제 수치로 직접 작성) ──────────────────
+    report_lines = [
+        "# CAN 버스 침입 분석 보고서",
+        "",
+        "## 분석 개요",
+        f"분석 대상: {split_name} 세트 | 탐지 도구: XGBoost IDS + SHAP",
+        f"탐지된 공격 유형: {', '.join(attack_types)} | 총 탐지 구간: {total_windows}개",
+        "",
+        "## 분석 기준 및 한계",
+        "- 0.2초 슬라이딩 윈도우 단위로 피처를 추출하여 XGBoost로 분류하였다.",
+        "- SHAP 값은 모델 판단 근거를 설명하는 보조 지표이며 절대적 증거가 아니다.",
+        "- ECU 단위 확정 판단에는 원본 로그와 ECU 명세 대조가 추가로 필요하다.",
+        "",
+    ]
+
+    # ── 공격 유형별 섹션 ───────────────────────────────────────────────
+    for result in all_results:
+        attack = result["attack_type"]
+        wcount = result["window_count"]
+        windows = result.get("windows", [])
+
+        report_lines.append(f"## {attack} Attack 분석")
+        report_lines.append(f"총 {wcount}개 구간 탐지, 대표 {len(windows)}개 구간 분석.")
+        report_lines.append("")
+
+        for w in windows:
+            rank     = w["rank"]
+            t_start  = w["t_start"]
+            t_end    = w["t_end"]
+            shap_tot = w["shap_total"]
+
+            report_lines.append(f"### 구간 #{rank}")
+            report_lines.append(f"- 시간: {t_start}s ~ {t_end}s")
+            report_lines.append(f"- SHAP 총합: {shap_tot}")
+            report_lines.append("")
+
+            # Python이 실제 수치 증거 나열
+            report_lines.append("**관찰된 이상 징후:**")
+            for feat in w["shap_top5"][:3]:
+                name   = feat["feature"]
+                actual = feat.get("actual", 0)
+                normal = feat.get("normal_mean", 0)
+                shap_v = feat.get("shap_value", 0)
+                evi    = w["frame_evidence"].get(name, {})
+                evi_s  = _summarize_feature_evidence(name, feat, evi)
+                # 증거 줄 추출; 없거나 "직접 역추적 불가"면 FEATURE_SEMANTICS 의미로 대체
+                evi_last = [l.strip() for l in evi_s.split("\n") if l.strip().startswith("증거")]
+                evi_str  = evi_last[0] if evi_last else ""
+                if not evi_str or "직접 역추적 불가" in evi_str:
+                    meaning = FEATURE_SEMANTICS.get(name, "")
+                    if name in _IAT_FEATURES:
+                        evi_str = f"증거: 실측 {actual*1000:.4f}ms, 정상평균 {normal*1000:.4f}ms | {meaning}"
+                    else:
+                        evi_str = f"증거: 실측 {actual:.4f}, 정상평균 {normal:.4f} | {meaning}"
+                report_lines.append(f"- {name} (SHAP {shap_v:+.4f}): {evi_str}")
+            report_lines.append("")
+
+            # LLM에게 이 구간 분석 문장만 요청
+            window_text = _build_window_prompt_item(attack, w)
+            top_feat_names = [f["feature"] for f in w["shap_top5"][:3]]
+            feat_meanings = "\n".join(
+                f"- {k}: {v}"
+                for k, v in FEATURE_SEMANTICS.items()
+                if k in top_feat_names
+            )
+            example = _REPLAY_EXAMPLE if attack == "Replay" else _SPOOFING_EXAMPLE
+            llm_prompt = (
+                f"[역할] 차량 CAN 버스 포렌식 조사관\n\n"
+                f"[문체 규칙 — 반드시 지킬 것]\n"
+                f"- 정확히 3문장. 각 문장은 마침표로 끝낸다.\n"
+                f"- 허용 어미: ~다, ~한다, ~된다, ~보인다, ~필요하다\n"
+                f"- 금지 어미: ~됩니다, ~입니다, ~습니다, ~의심됩니다, ~있습니다\n"
+                f"- 존댓말 금지. 가상 ID·날짜·수치 생성 금지. 제공된 수치만 사용.\n\n"
+                f"[좋은 예시]\n{example}\n\n"
+                f"[피처 의미]\n{feat_meanings}\n\n"
+                f"[분석 데이터]\n{window_text}\n\n"
+                f"[문장 순서] 1)관찰 수치 → 2){attack} Attack 판단 근거(CAN 원리) → 3)조사관 판단\n\n"
+                f"분석:"
+            )
+            print(f"  [{attack} #{rank}] LLM 분석 생성 중...", end="", flush=True)
+            analysis = _call_ollama(llm_prompt, assistant_prefix="")
+            if analysis:
+                # 공백 없이 붙은 한글+영문 경계 수정
+                analysis = re.sub(r'([가-힣])(Replay|Spoofing|CAN|ECU|ID)', r'\1 \2', analysis)
+                analysis = re.sub(r'(Replay|Spoofing|CAN|ECU|ID)([가-힣])', r'\1 \2', analysis)
+                report_lines.append("**분석 의견:**")
+                report_lines.append(analysis)
+                print(" 완료")
+            else:
+                report_lines.append("**분석 의견:** (생성 실패)")
+                print(" 실패")
+            report_lines.append("")
+
+    # ── 종합 판단 (LLM) ────────────────────────────────────────────────
+    report_lines.append("## 종합 판단")
+    summary_prompt = (
+        f"[역할] 차량 CAN 버스 포렌식 조사관\n\n"
+        f"[문체 규칙]\n"
+        f"- 정확히 3문장. 마침표로 끝낸다.\n"
+        f"- 금지 어미: ~됩니다, ~입니다, ~습니다, ~있습니다\n"
+        f"- 허용 어미: ~다, ~한다, ~된다, ~필요하다\n"
+        f"- 가상 수치·날짜 생성 금지.\n\n"
+        f"[분석 결과]\n"
+        f"탐지 공격: {', '.join(attack_types)} | 총 {total_windows}개 구간\n\n"
+        f"[문장 순서] 1)탐지된 공격 패턴 요약 → 2)각 공격 유형의 주요 CAN 버스 이상 징후 → "
+        f"3)ECU 단위 확정을 위해 추가 로그 분석이 필요하다는 내용\n\n"
+        f"종합 판단:"
     )
+    print("  [종합 판단] LLM 생성 중...", end="", flush=True)
+    summary = _call_ollama(summary_prompt)
+    if summary:
+        report_lines.append(summary)
+        print(" 완료")
+    else:
+        report_lines.append("(생성 실패)")
+        print(" 실패")
 
+    report_lines.append("")
+    report_lines.append("## 추가 확인 권고 사항")
+    report_lines.append("- 탐지 구간의 원본 CAN 로그와 ECU 명세를 대조하여 실제 침입 여부를 확인한다.")
+    report_lines.append("- 동일 ID(특히 Spoofing 의심 ID)의 정상 전송 주기 및 payload 범위를 검증한다.")
+    report_lines.append("- Replay 의심 구간의 타임스탬프를 차량 ECU 이벤트 로그와 교차 검증한다.")
+
+    # ── 저장 ──────────────────────────────────────────────────────────
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    report_path = os.path.join(OUTPUT_DIR, f"forensic_report_llm_{split_name.lower()}.md")
     with open(report_path, "w", encoding="utf-8") as f:
-        f.write(report_text)
+        f.write("\n".join(report_lines))
 
-    print(f"  보고서 저장 완료: {report_path}")
+    print(f"  보고서 저장: {report_path}")
     print(f"[{split_name}] LLM 포렌식 보고서 생성 완료")
     return report_path
 
