@@ -457,7 +457,14 @@ def generate_llm_report(all_results, split_name="Test"):
                         evi_str = f"증거: 실측 {actual*1000:.4f}ms, 정상평균 {normal*1000:.4f}ms | {meaning}"
                     else:
                         evi_str = f"증거: 실측 {actual:.4f}, 정상평균 {normal:.4f} | {meaning}"
-                report_lines.append(f"- {name} (SHAP {shap_v:+.4f}): {evi_str}")
+                # 프레임 인덱스 추가
+                fidx = evi.get("frame_indices", [])
+                if fidx:
+                    fidx_str = ", ".join(str(i) for i in fidx[:10])
+                    suffix = f" (이상 프레임 인덱스: {fidx_str}{'...' if len(evi.get('frame_indices', [])) == 10 else ''})"
+                else:
+                    suffix = ""
+                report_lines.append(f"- {name} (SHAP {shap_v:+.4f}): {evi_str}{suffix}")
             report_lines.append("")
 
             # LLM에게 이 구간 분석 문장만 요청

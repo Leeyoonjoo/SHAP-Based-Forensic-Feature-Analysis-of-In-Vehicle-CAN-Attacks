@@ -174,6 +174,8 @@ def _trace_evidence(window_df, top_feature_names):
     for feat in top_feature_names:
         info = {}
 
+        frame_idx = list(window_df.index)  # 원본 프레임 인덱스
+
         # ── ID 분포 관련 ───────────────────────────────────────────
         if any(k in feat for k in ["top1_id", "top3_id", "id_entropy",
                                     "unique_id_count"]):
@@ -185,6 +187,12 @@ def _trace_evidence(window_df, top_feature_names):
             info["top1_ratio"]      = round(float(top5.iloc[0]) / total_msgs, 4) if len(top5) else 0
             info["unique_id_count"] = int(id_series.nunique())
             info["total_frames"]    = total_msgs
+            # 지배적 ID의 프레임 인덱스 (최대 10개)
+            if len(top5):
+                top1_id = top5.index[0]
+                info["frame_indices"] = [
+                    int(i) for i in window_df[id_series == top1_id].index[:10]
+                ]
 
         # ── (ID, Payload) 반복 관련 ───────────────────────────────
         elif any(k in feat for k in ["repeat_id_data", "unique_id_data",
@@ -204,6 +212,11 @@ def _trace_evidence(window_df, top_feature_names):
                 else:
                     cur_len = 1
             info["max_payload_run"] = run_len
+            # 가장 많이 반복된 (ID|payload) 쌍의 프레임 인덱스 (최대 10개)
+            if len(top3):
+                top_pair = top3.index[0]
+                mask = (id_data_key == top_pair)
+                info["frame_indices"] = [int(i) for i in window_df[mask].index[:10]]
 
         # ── payload entropy / 다양성 관련 ─────────────────────────
         elif any(k in feat for k in ["payload_entropy", "payload_byte"]):
@@ -212,6 +225,10 @@ def _trace_evidence(window_df, top_feature_names):
             info["total_frames"]            = total_msgs
             info["most_common_payload"]     = str(vc.index[0]) if len(vc) else ""
             info["most_common_payload_cnt"] = int(vc.iloc[0]) if len(vc) else 0
+            # 가장 많은 payload의 프레임 인덱스 (최대 10개)
+            if len(vc):
+                mask = (data_series == vc.index[0])
+                info["frame_indices"] = [int(i) for i in window_df[mask].index[:10]]
 
         # ── IAT / 타이밍 관련 ─────────────────────────────────────
         elif any(k in feat for k in ["iat", "burstiness"]):
@@ -221,7 +238,11 @@ def _trace_evidence(window_df, top_feature_names):
                 info["iat_std_ms"]   = round(float(np.std(iats))  * 1000, 4)
                 info["iat_min_ms"]   = round(float(np.min(iats))  * 1000, 4)
                 burst_thr            = np.mean(iats) * 0.1
-                info["burst_frames"] = int((iats < burst_thr).sum())
+                burst_mask           = iats < burst_thr
+                info["burst_frames"] = int(burst_mask.sum())
+                # 버스트 발생 프레임 인덱스 (최대 10개) — iats[i]는 frame[i+1] 직전
+                burst_positions = np.where(burst_mask)[0] + 1
+                info["frame_indices"] = [int(frame_idx[p]) for p in burst_positions[:10]]
             else:
                 info["note"] = "프레임 수 부족"
 
